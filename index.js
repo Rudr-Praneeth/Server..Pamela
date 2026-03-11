@@ -3,11 +3,14 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import compression from "compression";
+import multer from "multer";
+import XLSX from "xlsx";
 import WasteEntry from "./models/WasteEntry.js";
 
 dotenv.config();
 
 const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
 app.use(express.json({ limit: "50kb" }));
@@ -17,6 +20,18 @@ app.use((req, res, next) => {
   console.log(`${req.method} ${req.originalUrl}`);
   next();
 });
+
+const normalizeDate = (val) => {
+  if (!val) return "";
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return String(val);
+};
 
 const startServer = async () => {
   try {
@@ -36,12 +51,10 @@ const startServer = async () => {
         const year = Number(req.query.year);
         const entries = await WasteEntry.find({ year }).lean();
         const grouped = {};
-
         entries.forEach(e => {
           if (!grouped[e.month]) grouped[e.month] = [];
           grouped[e.month].push(e);
         });
-
         res.json(grouped);
       } catch {
         res.status(500).send("Server error");
@@ -61,6 +74,47 @@ const startServer = async () => {
         const data = Array.isArray(req.body) ? req.body : [req.body];
         await WasteEntry.insertMany(data);
         res.status(201).json({ inserted: data.length });
+      } catch {
+        res.status(500).send("Server error");
+      }
+    });
+
+    app.post("/api/waste-upload", upload.single("file"), async (req, res) => {
+      try {
+        if (!req.file) return res.status(400).send("No file");
+
+        const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+        const payload = json.map(row => {
+          const keys = Object.keys(row);
+          const map = {};
+          keys.forEach(k => (map[k.toLowerCase()] = k));
+
+          const get = (names) => {
+            const k = names.map(n => map[n]).find(Boolean);
+            return k ? row[k] : "";
+          };
+
+          const date = normalizeDate(get(["date", "date of entry", "day"]));
+          const d = new Date(date);
+
+          return {
+            year: !isNaN(d.getTime()) ? d.getFullYear() : new Date().getFullYear(),
+            month: !isNaN(d.getTime()) ? d.toLocaleString("default", { month: "long" }) : "",
+            date,
+            red: Number(get(["red", "red waste", "r"])) || 0,
+            yellow: Number(get(["yellow", "yellow waste", "y"])) || 0,
+            blue: Number(get(["blue", "blue waste", "b"])) || 0,
+            white: Number(get(["white", "white waste", "w"])) || 0
+          };
+        }).filter(e => e.date);
+
+        if (!payload.length) return res.status(400).send("No valid rows");
+
+        await WasteEntry.insertMany(payload);
+        res.json({ inserted: payload.length });
       } catch {
         res.status(500).send("Server error");
       }
