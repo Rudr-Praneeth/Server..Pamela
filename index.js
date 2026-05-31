@@ -61,6 +61,21 @@ const startServer = async () => {
       }
     });
 
+    app.get("/api/waste/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const entry = await WasteEntry.findById(id).lean();
+
+        if (!entry) {
+          return res.status(404).json({ error: "Record not found", id });
+        }
+
+        res.json(entry);
+      } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+      }
+    });
+
     app.post("/api/admin-auth", (req, res) => {
       if (req.body.password === process.env.ADMIN_PASSWORD) {
         res.json({ ok: true });
@@ -74,8 +89,19 @@ const startServer = async () => {
         const data = Array.isArray(req.body) ? req.body : [req.body];
         await WasteEntry.insertMany(data);
         res.status(201).json({ inserted: data.length });
-      } catch {
-        res.status(500).send("Server error");
+      } catch (err) {
+        if (err.code === 11000) {
+          const field = Object.keys(err.keyPattern)[0];
+          const value = err.keyValue[field];
+          res.status(409).json({
+            error: `Duplicate entry for ${field}`,
+            message: `A record with ${field} "${value}" already exists. Use PUT to update the existing record.`,
+            field,
+            value
+          });
+        } else {
+          res.status(500).json({ error: "Server error", message: err.message });
+        }
       }
     });
 
@@ -113,10 +139,102 @@ const startServer = async () => {
 
         if (!payload.length) return res.status(400).send("No valid rows");
 
-        await WasteEntry.insertMany(payload);
-        res.json({ inserted: payload.length });
-      } catch {
-        res.status(500).send("Server error");
+        try {
+          await WasteEntry.insertMany(payload);
+          res.json({ inserted: payload.length });
+        } catch (err) {
+          if (err.code === 11000) {
+            res.status(409).json({
+              error: "Duplicate dates found in upload",
+              message: "Some records have dates that already exist. Use PUT to update existing records.",
+              details: err.message
+            });
+          } else {
+            res.status(500).json({ error: "Server error", message: err.message });
+          }
+        }
+      } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
+      }
+    });
+
+    app.put("/api/waste/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const updates = req.body;
+
+        const entry = await WasteEntry.findByIdAndUpdate(
+          id,
+          updates,
+          { new: true, runValidators: true }
+        );
+
+        if (!entry) {
+          return res.status(404).json({ error: "Record not found", id });
+        }
+
+        res.json({ updated: entry });
+      } catch (err) {
+        if (err.code === 11000) {
+          const field = Object.keys(err.keyPattern)[0];
+          const value = err.keyValue[field];
+          res.status(409).json({
+            error: `Duplicate ${field}`,
+            message: `A record with ${field} "${value}" already exists.`,
+            field,
+            value
+          });
+        } else {
+          res.status(500).json({ error: "Server error", message: err.message });
+        }
+      }
+    });
+
+    app.patch("/api/waste/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const updates = req.body;
+
+        const entry = await WasteEntry.findByIdAndUpdate(
+          id,
+          updates,
+          { new: true, runValidators: true }
+        );
+
+        if (!entry) {
+          return res.status(404).json({ error: "Record not found", id });
+        }
+
+        res.json({ updated: entry });
+      } catch (err) {
+        if (err.code === 11000) {
+          const field = Object.keys(err.keyPattern)[0];
+          const value = err.keyValue[field];
+          res.status(409).json({
+            error: `Duplicate ${field}`,
+            message: `A record with ${field} "${value}" already exists.`,
+            field,
+            value
+          });
+        } else {
+          res.status(500).json({ error: "Server error", message: err.message });
+        }
+      }
+    });
+
+    app.delete("/api/waste/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const entry = await WasteEntry.findByIdAndDelete(id);
+
+        if (!entry) {
+          return res.status(404).json({ error: "Record not found", id });
+        }
+
+        res.json({ deleted: entry });
+      } catch (err) {
+        res.status(500).json({ error: "Server error", message: err.message });
       }
     });
 
